@@ -1,0 +1,77 @@
+# Docker Swarm stack for Portainer: runs the Termix image built from this
+# fork by .github/workflows/songhai-image.yml and publishes it through an
+# existing Traefik instance.
+#
+# Portainer > Stacks > Add stack > Repository (or paste into Web editor)
+#   Repository URL:  https://github.com/mutambe/Termix
+#   Reference:       refs/heads/main
+#   Compose path:    docker/portainer-stack.yml
+#
+# Environment variables (set in the stack, defaults shown):
+#   TERMIX_IMAGE          ghcr.io/mutambe/termix:latest
+#   TERMIX_DOMAIN         ssh.songhai.cc
+#   TERMIX_PLACEMENT      node.role == manager   termix and guacd share a local
+#                                                volume, so both run on this node
+#   TRAEFIK_NETWORK       traefik       overlay network Traefik is attached to
+#   TRAEFIK_ENTRYPOINT    websecure     Traefik HTTPS entrypoint name
+#   TRAEFIK_CERTRESOLVER  letsencrypt   Traefik ACME certificate resolver name
+#   TRAEFIK_PROVIDER      swarm         "swarm" for Traefik v3, "docker" for v2
+
+version: "3.8"
+
+services:
+  termix:
+    image: ${TERMIX_IMAGE:-ghcr.io/mutambe/termix:latest}
+    volumes:
+      - termix-data:/app/data
+    environment:
+      PORT: "8080"
+      GUACD_HOST: "guacd"
+      GUACD_TUNNEL_HOST: "termix"
+      GUACD_RECORDING_PATH: "/termix-data/session_recordings/guacamole"
+      GUACD_DRIVE_PATH: "/termix-data/rdp-drive"
+      # The image ships with product analytics enabled; an empty key turns it off.
+      # POSTHOG_API_KEY: ""
+    networks:
+      - termix-net
+      - traefik
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - ${TERMIX_PLACEMENT:-node.role == manager}
+      restart_policy:
+        condition: any
+      labels:
+        - traefik.enable=true
+        - traefik.${TRAEFIK_PROVIDER:-swarm}.network=${TRAEFIK_NETWORK:-traefik}
+        - traefik.http.routers.termix.rule=Host(`${TERMIX_DOMAIN:-ssh.songhai.cc}`)
+        - traefik.http.routers.termix.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+        - traefik.http.routers.termix.tls=true
+        - traefik.http.routers.termix.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}
+        - traefik.http.services.termix.loadbalancer.server.port=8080
+
+  guacd:
+    image: guacamole/guacd:1.6.0
+    volumes:
+      - termix-data:/termix-data
+    networks:
+      - termix-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - ${TERMIX_PLACEMENT:-node.role == manager}
+      restart_policy:
+        condition: any
+
+volumes:
+  termix-data:
+    driver: local
+
+networks:
+  termix-net:
+    driver: overlay
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}
