@@ -1,21 +1,28 @@
 # Docker Swarm stack for Portainer: runs the Termix image built from this
-# fork by .github/workflows/songhai-image.yml and publishes it through an
-# existing Traefik instance.
+# fork by .github/workflows/songhai-image.yml behind the existing Traefik.
 #
-# Portainer > Stacks > Add stack > Repository (or paste into Web editor)
-#   Repository URL:  https://github.com/mutambe/Termix
-#   Reference:       refs/heads/main
-#   Compose path:    docker/portainer-stack.yml
+# Deployed in Portainer as the stack "ssh_termix", so the Termix service is
+# reachable on the Traefik network as ssh_termix_termix:8080.
+#
+# Routing: the Traefik on this Swarm (v2.10) only uses its file provider and
+# ignores service labels. The route lives in /opt/traefik/config.toml on the
+# manager node:
+#
+#   [http.routers.termix]
+#     rule = "Host(`ssh.songhai.cc`)"
+#     entrypoints = ["web","websecure"]
+#     service = "termix"
+#     [http.routers.termix.tls]
+#       certResolver = "letsencrypt"
+#   [http.services.termix.loadBalancer]
+#     [[http.services.termix.loadBalancer.servers]]
+#       url = "http://ssh_termix_termix:8080"
 #
 # Environment variables (set in the stack, defaults shown):
-#   TERMIX_IMAGE          ghcr.io/mutambe/termix:latest
-#   TERMIX_DOMAIN         ssh.songhai.cc
-#   TERMIX_PLACEMENT      node.role == manager   termix and guacd share a local
-#                                                volume, so both run on this node
-#   TRAEFIK_NETWORK       traefik       overlay network Traefik is attached to
-#   TRAEFIK_ENTRYPOINT    websecure     Traefik HTTPS entrypoint name
-#   TRAEFIK_CERTRESOLVER  letsencrypt   Traefik ACME certificate resolver name
-#   TRAEFIK_PROVIDER      swarm         "swarm" for Traefik v3, "docker" for v2
+#   TERMIX_IMAGE       ghcr.io/mutambe/termix:latest
+#   TERMIX_PLACEMENT   node.role == manager   termix and guacd share a local
+#                                             volume, so both run on this node
+#   TRAEFIK_NETWORK    traefik_public         overlay network Traefik is attached to
 
 version: "3.8"
 
@@ -42,14 +49,6 @@ services:
           - ${TERMIX_PLACEMENT:-node.role == manager}
       restart_policy:
         condition: any
-      labels:
-        - traefik.enable=true
-        - traefik.${TRAEFIK_PROVIDER:-swarm}.network=${TRAEFIK_NETWORK:-traefik}
-        - traefik.http.routers.termix.rule=Host(`${TERMIX_DOMAIN:-ssh.songhai.cc}`)
-        - traefik.http.routers.termix.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
-        - traefik.http.routers.termix.tls=true
-        - traefik.http.routers.termix.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}
-        - traefik.http.services.termix.loadbalancer.server.port=8080
 
   guacd:
     image: guacamole/guacd:1.6.0
@@ -74,4 +73,4 @@ networks:
     driver: overlay
   traefik:
     external: true
-    name: ${TRAEFIK_NETWORK:-traefik}
+    name: ${TRAEFIK_NETWORK:-traefik_public}
